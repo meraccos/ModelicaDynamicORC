@@ -1,4 +1,6 @@
 package Rankine
+  import SI = Modelica.SIunits;
+  import Modelica.Constants.pi;
   package Tests
     model Test_StaticHX
       ThermoPower.Water.SourceMassFlow sourceMassFlow1(T = 365, h = 2804772, use_T = false, w0 = 0.01) annotation(
@@ -11,7 +13,7 @@ package Rankine
         Placement(visible = true, transformation(origin = {84, 90}, extent = {{-10, -10}, {10, 10}}, rotation = 0)));
       ThermoPower.Water.SinkPressure sinkPressure(h = 0) annotation(
         Placement(visible = true, transformation(origin = {46, 26}, extent = {{-10, -10}, {10, 10}}, rotation = 0)));
-  Rankine.Components.StaticHX staticHX1(h_t = 400, n = 50, wc_nom = 5, wh_nom = 0.01)  annotation(
+    Components.StaticHX staticHX1(h_t = 400, n = 50, wc_nom = 5, wh_nom = 0.01)  annotation(
         Placement(visible = true, transformation(origin = {-10, 4}, extent = {{-10, -10}, {10, 10}}, rotation = 0)));
     equation
       connect(sourceMassFlow.flange, staticHX1.cold_inlet) annotation(
@@ -113,8 +115,6 @@ package Rankine
 
   package Models
     model StaticHX_model
-      import SI = Modelica.SIunits;
-      import Modelica.Constants.pi;
       package Medium = Modelica.Media.Water.StandardWater;
       parameter Integer n = 20 "Number of finite divisions";
       parameter Integer N = 100 "Number of tubes";
@@ -124,15 +124,14 @@ package Rankine
       parameter SI.CoefficientOfHeatTransfer h_t = 150 "Heat transfer coefficient";
       SI.Temperature Th[n] "Hot side temperature";
       SI.Temperature Tc[n] "Cold side temperature";
-      Medium.SpecificEnthalpy hh[n](start = fill(hh_in, n)) "Hot side specific enthalpy";
-      Medium.SpecificEnthalpy hc[n](start = fill(hc_in, n)) "Cold side specific enthalpy";
+      Medium.SpecificEnthalpy hh[n](start = linspace(0.73 * hh_in, hh_in, n)) "Hot side specific enthalpy";
+      Medium.SpecificEnthalpy hc[n](start = linspace(hc_in, 8.8 * hc_in, n)) "Cold side specific enthalpy";
       Medium.ThermodynamicState state_h[n];
       Medium.ThermodynamicState state_c[n];
       SI.Power Qt[n] "Heat transfer at slice i";
       Real x_h[n] "Hot side vapour quality";
       Real x_c[n] "Hot side vapour quality";
-      SI.Temperature dT_hot(displayUnit = "K") "Hot inlet temperature change";
-      SI.Temperature dT_cold(displayUnit = "K") "Cold inlet temperature change";
+      SI.Temperature dT[n] "Temperature difference";
       //The following variable and parameters can be substituted with connectors
       parameter Medium.MassFlowRate wh = wc / N "Hot side mass flow rate";
       parameter Medium.MassFlowRate wc = 0.5 "Cold side mass flow rate";
@@ -140,28 +139,30 @@ package Rankine
       parameter Medium.SpecificEnthalpy hc_in = 150000 "Cold side inlet enthalpy";
       parameter SI.Pressure p_hot = 1e5 "Hot side Pressure";
       parameter SI.Pressure p_cold = 1e5 "Cold side pressure";
+    protected
+      parameter Medium.Temperature Tc_in = Medium.temperature_ph(p_cold, hc_in);
+      parameter Medium.Temperature Th_in = Medium.temperature_ph(p_hot, hh_in);  
     equation
-//Heat transfer Q_i ( the second value in homotopy is an approximation for dT_ave )
+    //Heat transfer Q_i ( the second value in homotopy is an approximation for dT_ave )
       Qt[1:n] = 2 * pi * r * dx * h_t * homotopy(Th[1:n] - Tc[1:n], (Th[n] - Tc[1]) / 2);
-//Energy conservation for cold fluid
+    //Energy conservation for cold fluid
       Qt[2:n] * N + wc * hc[1:n - 1] = wc * hc[2:n];
-//Energy conservation for hot fluid
+    //Energy conservation for hot fluid
       Qt[1:n - 1] + wh * hh[1:n - 1] = wh * hh[2:n];
-//Setting the states
+    //Setting the states
       state_h = Medium.setState_phX(p_hot, hh);
       state_c = Medium.setState_phX(p_cold, hc);
-//Extracting the temperatures from the states
-      Th = Medium.temperature(state_h);
-      Tc = Medium.temperature(state_c);
-//Extracting the qualities from the states
+    //Extracting the temperatures from the states
+      Th = state_h.T;
+      Tc = state_c.T;
+    //Extracting the qualities from the states
       x_h = Medium.vapourQuality(state_h);
       x_c = Medium.vapourQuality(state_c);
-//Boundary conditions
+    //Boundary conditions
       hc[1] = hc_in;
       hh[n] = hh_in;
-//Temperature difference at the inlet and outlet
-      dT_cold = Th[1] - Tc[1];
-      dT_hot = Th[n] - Tc[n];
+    //Temperature difference at the inlet and outlet
+      dT = Th - Tc;
       annotation(
         __OpenModelica_commandLineOptions = "--matchingAlgorithm=PFPlusExt --indexReductionMethod=dynamicStateSelection -d=initialization,NLSanalyticJacobian -d=bltdump",
         __OpenModelica_simulationFlags(lv = "LOG_STATS", s = "dassl"),
@@ -174,8 +175,6 @@ package Rankine
     //state_c[1:n] = Medium.setState_phX(p_cold, hc[1:n]);
 
     model DynamicHX_model
-      import SI = Modelica.SIunits;
-      import Modelica.Constants.pi;
       package Medium = Modelica.Media.Water.StandardWater;
       parameter Integer n = 50 "Number of finite divisions";
       parameter Integer N = 100 "Number of tubes";
@@ -193,8 +192,7 @@ package Rankine
       SI.Power Qt[n] "Heat transfer at slice i";
       Real x_h[n] "Hot side vapour quality";
       Real x_c[n] "Hot side vapour quality";
-      SI.Temperature dT_hot(displayUnit = "K") "Hot inlet temperature change";
-      SI.Temperature dT_cold(displayUnit = "K") "Cold inlet temperature change";
+      SI.Temperature dT[n] "Temperature difference";
       //The following variable and parameters can be substituted with connectors
       parameter Medium.MassFlowRate wh = 0.01 "Hot side mass flow rate";
       Medium.MassFlowRate wc "Cold side mass flow rate";
@@ -212,27 +210,26 @@ package Rankine
       Qt[1:n] = 2 * pi * r * dx * h_t * homotopy(Th[1:n] - Tc[1:n], (Th[n] - Tc[1]) / 2);
 //Energy conservation for cold fluid
       for i in 2:n loop
-        Qt[i] * N + wc * (hc[i - 1] - hc[i]) = Medium.density(state_c[i]) * N * dV * der(hc[i]);
+        Qt[i] * N + wc * (hc[i - 1] - hc[i]) = state_c[i].d * N * dV * der(hc[i]);
       end for;
 //Energy conservation for hot fluid
       for i in 1:n - 1 loop
-        (-Qt[i]) + wh * (hh[i + 1] - hh[i]) = Medium.density(state_h[i]) * dV * der(hh[i]);
+        (-Qt[i]) + wh * (hh[i + 1] - hh[i]) = state_h[i].d * dV * der(hh[i]);
       end for;
 //Setting the states
       state_h = Medium.setState_phX(p_hot, hh);
       state_c = Medium.setState_phX(p_cold, hc);
 //Extracting the temperatures from the states
-      Th = Medium.temperature(state_h);
-      Tc = Medium.temperature(state_c);
+      Th = state_h.T;
+      Tc = state_c.T;
 //Extracting the qualities from the states
       x_h = Medium.vapourQuality(state_h);
       x_c = Medium.vapourQuality(state_c);
 //Boundary conditions
       hc[1] = hc_in;
       hh[n] = hh_in;
-//Temperature difference at the inlet and outlet
-      dT_cold = Th[1] - Tc[1];
-      dT_hot = Th[n] - Tc[n];
+    //Temperature difference at the inlet and outlet
+      dT = Th - Tc;
       annotation(
         __OpenModelica_commandLineOptions = "--matchingAlgorithm=PFPlusExt --indexReductionMethod=dynamicStateSelection -d=initialization,NLSanalyticJacobian -d=bltdump",
         __OpenModelica_simulationFlags(lv = "LOG_STATS", s = "dassl"));
@@ -241,8 +238,6 @@ package Rankine
 
   package Components
     model StaticHX
-      import SI = Modelica.SIunits;
-      import Modelica.Constants.pi;
       package Medium = Modelica.Media.Water.StandardWater;
       parameter Integer n = 20 "Number of finite divisions";
       parameter Integer N = 100 "Number of tubes";
@@ -259,8 +254,7 @@ package Rankine
       SI.Power Qt[n] "Heat transfer at slice i";
       Real x_h[n] "Hot side vapour quality";
       Real x_c[n] "Hot side vapour quality";
-      SI.Temperature dT_hot(displayUnit = "K") "Hot inlet temperature change";
-      SI.Temperature dT_cold(displayUnit = "K") "Cold inlet temperature change";
+      SI.Temperature dT[n] "Temperature difference";
       Medium.MassFlowRate wh "Hot side mass flow rate";
       Medium.MassFlowRate wc "Cold side mass flow rate";
       parameter Medium.MassFlowRate wh_nom = wc_nom / n "Hot side  nominal mass flow rate";
@@ -287,17 +281,17 @@ package Rankine
 //Setting the states
       state_h = Medium.setState_phX(p_hot, hh);
       state_c = Medium.setState_phX(p_cold, hc);
-//Extracting the temperatures from the states
-      Th = Medium.temperature_ph(p_hot, hh);
-      Tc = Medium.temperature_ph(p_cold, hc);
+    //Extracting the temperatures from the states
+      Th = state_h.T;
+      Tc = state_c.T;
 //Extracting the qualities from the states
       x_h = Medium.vapourQuality(state_h);
       x_c = Medium.vapourQuality(state_c);
 //Boundary conditions
       hh[n] = hh_in;
       hc[1] = hc_in;
-      dT_cold = Th[1] - Tc[1];
-      dT_hot = Th[n] - Tc[n];
+    //Temperature difference at the inlet and outlet
+      dT = Th - Tc;
 //Flange equations
 //Mass flow rates
       cold_outlet.m_flow + cold_inlet.m_flow = 0;
@@ -324,8 +318,6 @@ package Rankine
     end StaticHX;
 
     model DynamicHX
-      import SI = Modelica.SIunits;
-      import Modelica.Constants.pi;
       package Medium = Modelica.Media.Water.StandardWater;
       parameter Integer n = 50 "Number of finite divisions";
       parameter Integer N = 100 "Number of tubes";
@@ -378,18 +370,18 @@ package Rankine
 //end of new addition
 //Energy conservation for cold fluid
       for i in 2:n loop
-        Qt[i] * N + wc * (hc[i - 1] - hc[i]) = Medium.density(state_c[i]) * N * dV * der(hc[i]);
+        Qt[i] * N + wc * (hc[i - 1] - hc[i]) = state_c[i].d * N * dV * der(hc[i]);
       end for;
 //Energy conservation for hot fluid
       for i in 1:n - 1 loop
-        (-Qt[i]) + wh * (hh[i + 1] - hh[i]) = Medium.density(state_h[i]) * dV * der(hh[i]);
+        (-Qt[i]) + wh * (hh[i + 1] - hh[i]) = state_h[i].d * dV * der(hh[i]);
       end for;
 //Setting the states
       state_h = Medium.setState_phX(p_hot, hh);
       state_c = Medium.setState_phX(p_cold, hc);
 //Extracting the temperatures from the states
-      Th = Medium.temperature(state_h);
-      Tc = Medium.temperature(state_c);
+      Th = state_h.T;
+      Tc = state_c.T;
 //Extracting the qualities from the states
       x_h = Medium.vapourQuality(state_h);
       x_c = Medium.vapourQuality(state_c);
@@ -456,15 +448,15 @@ package Rankine
     model StodolaTurbine "Steam turbine"
       package Medium = ThermoPower.Water.StandardWater;
       
-      parameter Modelica.SIunits.PerUnit eta_iso_nom=0.92 "Nominal isentropic efficiency";
-      parameter Modelica.SIunits.Area Kt "Kt coefficient of Stodola's law";
+      parameter SI.PerUnit eta_iso_nom=0.92 "Nominal isentropic efficiency";
+      parameter SI.Area Kt "Kt coefficient of Stodola's law";
       Medium.Density rho "Inlet density"; 
         
       parameter Boolean explicitIsentropicEnthalpy=true
         "Outlet enthalpy computed by isentropicEnthalpy function";
       parameter Medium.MassFlowRate wstart=wnom "Mass flow rate start value"
         annotation (Dialog(tab="Initialisation"));
-      parameter Modelica.SIunits.PerUnit PRstart "Pressure ratio start value"
+      parameter SI.PerUnit PRstart "Pressure ratio start value"
         annotation (Dialog(tab="Initialisation"));
       parameter Medium.MassFlowRate wnom "Inlet nominal flowrate";
       parameter Medium.AbsolutePressure pnom "Nominal inlet pressure";
@@ -477,9 +469,9 @@ package Rankine
       Medium.ThermodynamicState steamState_in;
       Medium.ThermodynamicState steamState_iso;
     
-      Modelica.SIunits.Angle phi(start=0) "shaft rotation angle";
-      Modelica.SIunits.Torque tau "net torque acting on the turbine";
-      Modelica.SIunits.AngularVelocity omega "shaft angular velocity";
+      SI.Angle phi(start=0) "shaft rotation angle";
+      SI.Torque tau "net torque acting on the turbine";
+      SI.AngularVelocity omega "shaft angular velocity";
       Medium.MassFlowRate w "Mass flow rate";
       Medium.SpecificEnthalpy hin "Inlet enthalpy";
       Medium.SpecificEnthalpy hout "Outlet enthalpy";
@@ -487,10 +479,10 @@ package Rankine
       Medium.SpecificEntropy sin "Inlet entropy";
       Medium.AbsolutePressure pin(start=pnom) "Outlet pressure";
       Medium.AbsolutePressure pout(start=pnom/PRstart) "Outlet pressure";
-      Modelica.SIunits.PerUnit PR "pressure ratio";
-      Modelica.SIunits.Power Pm "Mechanical power input";
-      Modelica.SIunits.PerUnit eta_iso "Isentropic efficiency";
-      Modelica.SIunits.PerUnit theta "Partial arc opening in p.u."; 
+      SI.PerUnit PR "pressure ratio";
+      SI.Power Pm "Mechanical power input";
+      SI.PerUnit eta_iso "Isentropic efficiency";
+      SI.PerUnit theta "Partial arc opening in p.u."; 
     
       Modelica.Blocks.Interfaces.RealInput partialArc if usePartialArcInput
         "Partial arc opening in p.u." annotation (Placement(
@@ -593,11 +585,11 @@ package Rankine
     function ht_formula
       package Medium = Modelica.Media.Water.StandardWater;
       input Medium.ThermodynamicState state;
-      input Modelica.SIunits.Velocity v;
-      output Modelica.SIunits.CoefficientOfHeatTransfer h;
+      input SI.Velocity v;
+      output SI.CoefficientOfHeatTransfer h;
     protected
       Real C "Nusselt's number coefficient";
-      parameter Modelica.SIunits.Length t = 0.01 "Thickness";
+      parameter SI.Length t = 0.01 "Thickness";
       parameter Real n_t = 1 / 3;
       parameter Real m_t = 0.5;
       Real Nu "Nusselt's number";
@@ -629,18 +621,18 @@ package Rankine
       package Medium = Modelica.Media.Water.StandardWater;
       input Medium.ThermodynamicState state "State of the fluid";
       input Real w_a "Mass flow rate per unit area";
-      output Modelica.SIunits.CoefficientOfHeatTransfer ht_res "result ht value";
+      output SI.CoefficientOfHeatTransfer ht_res "result ht value";
     protected
       Medium.SaturationProperties sat;
       Medium.SpecificEnthalpy h;
       Medium.SpecificEnthalpy hf;
       Medium.SpecificEnthalpy hg;
-      Modelica.SIunits.CoefficientOfHeatTransfer ht;
-      Modelica.SIunits.CoefficientOfHeatTransfer ht_f;
-      Modelica.SIunits.CoefficientOfHeatTransfer ht_g;
-      Modelica.SIunits.Velocity v;
-      Modelica.SIunits.Velocity v_0;
-      Modelica.SIunits.Velocity v_1;
+      SI.CoefficientOfHeatTransfer ht;
+      SI.CoefficientOfHeatTransfer ht_f;
+      SI.CoefficientOfHeatTransfer ht_g;
+      SI.Velocity v;
+      SI.Velocity v_0;
+      SI.Velocity v_1;
       Medium.ThermodynamicState state_f;
       Medium.ThermodynamicState state_g;
       Real x;
@@ -671,7 +663,7 @@ package Rankine
       package Medium = Modelica.Media.Water.StandardWater;
       input Medium.ThermodynamicState state "State of the fluid";
       input Real VxRho "Mass flow rate per unit area";
-      output Modelica.SIunits.CoefficientOfHeatTransfer ht_res;
+      output SI.CoefficientOfHeatTransfer ht_res;
     protected
       parameter Real k;
       parameter Real d;
@@ -679,12 +671,12 @@ package Rankine
       Medium.SpecificEnthalpy h;
       Medium.SpecificEnthalpy hf;
       Medium.SpecificEnthalpy hg;
-      Modelica.SIunits.CoefficientOfHeatTransfer ht;
-      Modelica.SIunits.CoefficientOfHeatTransfer ht_f;
-      Modelica.SIunits.CoefficientOfHeatTransfer ht_g;
-      Modelica.SIunits.Velocity v;
-      Modelica.SIunits.Velocity v_0;
-      Modelica.SIunits.Velocity v_1;
+      SI.CoefficientOfHeatTransfer ht;
+      SI.CoefficientOfHeatTransfer ht_f;
+      SI.CoefficientOfHeatTransfer ht_g;
+      SI.Velocity v;
+      SI.Velocity v_0;
+      SI.Velocity v_1;
       Medium.ThermodynamicState state_f;
       Medium.ThermodynamicState state_g;
       Real x;
@@ -708,9 +700,9 @@ package Rankine
     function ht_ref_sigmoid
       package Medium = Modelica.Media.Water.StandardWater;
       input Medium.ThermodynamicState state "State of the fluid";
-      input Modelica.SIunits.CoefficientOfHeatTransfer ht_f;
-      input Modelica.SIunits.CoefficientOfHeatTransfer ht_g;
-      output Modelica.SIunits.CoefficientOfHeatTransfer ht_res "result ht value";
+      input SI.CoefficientOfHeatTransfer ht_f;
+      input SI.CoefficientOfHeatTransfer ht_g;
+      output SI.CoefficientOfHeatTransfer ht_res "result ht value";
     protected
       parameter Real k;
       parameter Real d;
@@ -718,7 +710,7 @@ package Rankine
       Medium.SpecificEnthalpy h;
       Medium.SpecificEnthalpy hf;
       Medium.SpecificEnthalpy hg;
-      Modelica.SIunits.CoefficientOfHeatTransfer ht;
+      SI.CoefficientOfHeatTransfer ht;
       Real x;
     algorithm
       sat.psat := Medium.pressure(state);
@@ -735,10 +727,10 @@ package Rankine
         package Medium = Modelica.Media.Water.StandardWater;
         Medium.SpecificEnthalpy h(start = 10e3);
         Medium.ThermodynamicState state;
-        parameter Modelica.SIunits.Pressure p = 1e5;
-        parameter Modelica.SIunits.MassFlowRate w = 0.5;
-        parameter Modelica.SIunits.Area A = Modelica.Constants.pi * 0.01 ^ 2;
-        Modelica.SIunits.CoefficientOfHeatTransfer ht;
+        parameter SI.Pressure p = 1e5;
+        parameter SI.MassFlowRate w = 0.5;
+        parameter SI.Area A = Modelica.Constants.pi * 0.01 ^ 2;
+        SI.CoefficientOfHeatTransfer ht;
         Real x;
       equation
         der(h) = 500;
@@ -751,10 +743,10 @@ package Rankine
         package Medium = Modelica.Media.Water.StandardWater;
         Medium.SpecificEnthalpy h(start = 10e3);
         Medium.ThermodynamicState state;
-        parameter Modelica.SIunits.Pressure p = 1e5;
-        parameter Modelica.SIunits.MassFlowRate w = 0.5;
-        parameter Modelica.SIunits.Area A = Modelica.Constants.pi * 0.05 ^ 2;
-        Modelica.SIunits.CoefficientOfHeatTransfer ht;
+        parameter SI.Pressure p = 1e5;
+        parameter SI.MassFlowRate w = 0.5;
+        parameter SI.Area A = Modelica.Constants.pi * 0.05 ^ 2;
+        SI.CoefficientOfHeatTransfer ht;
         Real x;
       equation
         der(h) = 500;
@@ -767,10 +759,10 @@ package Rankine
         package Medium = Modelica.Media.Water.StandardWater;
         Medium.SpecificEnthalpy h(start = 10e3);
         Medium.ThermodynamicState state;
-        parameter Modelica.SIunits.Pressure p = 1e5;
-        parameter Modelica.SIunits.MassFlowRate w = 0.5;
-        parameter Modelica.SIunits.Area A = Modelica.Constants.pi * 0.01 ^ 2;
-        Modelica.SIunits.CoefficientOfHeatTransfer ht;
+        parameter SI.Pressure p = 1e5;
+        parameter SI.MassFlowRate w = 0.5;
+        parameter SI.Area A = Modelica.Constants.pi * 0.01 ^ 2;
+        SI.CoefficientOfHeatTransfer ht;
         Real x;
       equation
         der(h) = 500;
@@ -783,10 +775,10 @@ package Rankine
         package Medium = Modelica.Media.Water.StandardWater;
         Medium.SpecificEnthalpy h(start = 10e3);
         Medium.ThermodynamicState state;
-        parameter Modelica.SIunits.Pressure p = 1e5;
-        parameter Modelica.SIunits.MassFlowRate w = 0.5;
-        parameter Modelica.SIunits.Area A = Modelica.Constants.pi * 0.01 ^ 2;
-        Modelica.SIunits.CoefficientOfHeatTransfer ht;
+        parameter SI.Pressure p = 1e5;
+        parameter SI.MassFlowRate w = 0.5;
+        parameter SI.Area A = Modelica.Constants.pi * 0.01 ^ 2;
+        SI.CoefficientOfHeatTransfer ht;
         Real x;
       equation
         der(h) = 500;
@@ -860,7 +852,7 @@ package Rankine
     model FixedP
       ThermoPower.Water.FlangeB flange annotation(
         Placement(visible = true, transformation(extent = {{80, -20}, {120, 20}}, rotation = 0), iconTransformation(extent = {{80, -20}, {120, 20}}, rotation = 0)));
-      parameter Modelica.SIunits.Pressure P;
+      parameter SI.Pressure P;
     equation
       flange.m_flow = 0;
       flange.p = P;
@@ -871,8 +863,6 @@ package Rankine
 
   package CombinationSteps
     model static_01
-      import SI = Modelica.SIunits;
-      import Modelica.Constants.pi;
       package Medium = Modelica.Media.Water.StandardWater;
       parameter Integer n = 50 "Number of finite divisions";
       parameter Integer N = 30 "Number of tubes";
